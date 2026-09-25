@@ -1,0 +1,360 @@
+{
+  "name": "Karachi Dental Clinic WhatsApp Cold Outreach Engine",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "9f1c5b3e-7d42-4c10-8e5a-1b2c3d4e5f01",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -1520,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "YOUR_GOOGLE_SHEET_ID"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "karachi_dental_clinics"
+        },
+        "options": {}
+      },
+      "id": "9f1c5b3e-7d42-4c10-8e5a-1b2c3d4e5f02",
+      "name": "Read Google Sheets",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [
+        -1280,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "a1b2c3d4-1111-4a8d-91bb-4eea72ad2bd1",
+              "leftValue": "={{ $json['Status'] }}",
+              "rightValue": "Pending",
+              "operator": {
+                "type": "string",
+                "operation": "contains"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "9f1c5b3e-7d42-4c10-8e5a-1b2c3d4e5f03",
+      "name": "Filter Pending Rows",
+      "type": "n8n-nodes-base.filter",
+      "typeVersion": 2,
+      "position": [
+        -1024,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "id": "9f1c5b3e-7d42-4c10-8e5a-1b2c3d4e5f04",
+      "name": "Split in Batches",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        -800,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "amount": 50,
+        "unit": "seconds"
+      },
+      "id": "9f1c5b3e-7d42-4c10-8e5a-1b2c3d4e5f05",
+      "name": "Wait 5s (Rate Limit)",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1,
+      "position": [
+        -560,
+        0
+      ],
+      "webhookId": "48613a9d-7b4f-4783-8b7e-652e01a0e20f"
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "YOUR_GOOGLE_SHEET_ID"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "karachi_dental_clinics"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Status": "Pitched",
+            "Phone": "=={{ $('Split in Batches').item.json.Phone }}"
+          },
+          "matchingColumns": [
+            "Phone"
+          ],
+          "schema": [
+            {
+              "id": "Clinic Name",
+              "displayName": "Clinic Name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Phone",
+              "displayName": "Phone",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Location/Area",
+              "displayName": "Location/Area",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Status",
+              "displayName": "Status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "row_number",
+              "displayName": "row_number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true,
+              "readOnly": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "9f1c5b3e-7d42-4c10-8e5a-1b2c3d4e5f09",
+      "name": "Update Google Sheets Status",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [
+        288,
+        256
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=You are a top-tier AI Automation Consultant conducting professional B2B cold outreach to dental clinics in Karachi via WhatsApp.\n\nYour task is to take the Clinic Name and Location/Area from the Google Sheet data and format a clean, highly engaging Roman Urdu WhatsApp message.\n\nINPUT DATA:\n- Clinic Name: {{ $json['Clinic Name'] }}\n- Raw Location Data: {{ $json['Location/Area'] }}\n\nLOCATION PROCESSING RULE:\n- Extract ONLY the main neighborhood/area and city from the Raw Location Data (e.g., if input is \"house 1205, scheme 33, karachi\", clean it to \"Scheme 33, Karachi\"). Ignore specific street numbers or house numbers.\n\nMESSAGE OUTPUT TEMPLATE (DO NOT ALTER STRUCTURE):\n\nAssalam-o-Alaikum Dr. / Team {{ $json['Clinic Name'] }}! 👋\n\n(Located in [Cleaned Area, Karachi])\n\nUmeed hai aap kheriyat se honge.\n\nHumne khaas taur par aapke clinic ke liye ek smart 24/7 AI Receptionist solution design kiya hai. Yeh aapke patients ke missed calls, after-hours WhatsApp messages aur queries ko instant handle karta hai, aur automatically appointments book kar leta hai. 🚀\n\nIs se aapke staff ka workload kam hoga aur koi bhi potential patient miss nahi hoga.\n\nKya main aapke saath iska ek short 2-minute video demo share kar sakta hoon?",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        -336,
+        0
+      ],
+      "id": "44e8306d-8766-4fb7-bcc9-5cc23c4c8a6b",
+      "name": "AI Agent",
+      "retryOnFail": true,
+      "waitBetweenTries": 5000
+    },
+    {
+      "parameters": {
+        "modelName": "models/gemini-2.5-flash",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1.1,
+      "position": [
+        -336,
+        192
+      ],
+      "id": "5b774a2f-c6c1-47b2-b720-6f4c987dd9c0",
+      "name": "Google Gemini Chat Model"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.ultramsg.com/instanceYOUR_INSTANCE_ID/messages/chat",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "token",
+              "value": "YOUR_ULTRAMSG_API_TOKEN"
+            },
+            {
+              "name": "to",
+              "value": "=={{ '92' + $('Read Google Sheets').item.json.Phone.toString().replace(/^0/, '') }}"
+            },
+            {
+              "name": "body",
+              "value": "={{ $json.output }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        32,
+        0
+      ],
+      "id": "9c364b0d-2456-4740-804a-a0e65de5e417",
+      "name": "HTTP Request"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "Read Google Sheets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Google Sheets": {
+      "main": [
+        [
+          {
+            "node": "Filter Pending Rows",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter Pending Rows": {
+      "main": [
+        [
+          {
+            "node": "Split in Batches",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split in Batches": {
+      "main": [
+        [],
+        [
+          {
+            "node": "AI Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait 5s (Rate Limit)": {
+      "main": [
+        [
+          {
+            "node": "Split in Batches",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Google Sheets Status": {
+      "main": [
+        [
+          {
+            "node": "Wait 5s (Rate Limit)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Gemini Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request": {
+      "main": [
+        [
+          {
+            "node": "Update Google Sheets Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  }
+}

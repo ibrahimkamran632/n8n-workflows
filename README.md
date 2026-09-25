@@ -10,6 +10,7 @@ Every workflow in this repository is committed as a single self-contained `.json
 
 - [Available workflows](#available-workflows)
 - [Simple Chatbot](#simple-chatbot)
+- [Karachi Dental Clinic WhatsApp Cold Outreach Engine](#karachi-dental-clinic-whatsapp-cold-outreach-engine)
 - [Requirements](#requirements)
 - [Importing a workflow into n8n](#importing-a-workflow-into-n8n)
   - [Option A — Import from the n8n editor](#option-a--import-from-the-n8n-editor)
@@ -27,6 +28,7 @@ Every workflow in this repository is committed as a single self-contained `.json
 | # | Workflow | File | Description | Nodes |
 |---|----------|------|-------------|-------|
 | 1 | **Simple Chatbot** | [`simple_chatbot_workflow.json`](./simple_chatbot_workflow.json) | A conversational AI agent backed by **Google Gemini**, with **LangChain buffer-window memory** for multi-turn context. | 4 |
+| 2 | **Karachi Dental Clinic WhatsApp Cold Outreach Engine** | [`whatsapp_outreach_workflow.json`](./whatsapp_outreach_workflow.json) | Rate-limited **WhatsApp cold outreach** loop that reads clinics from Google Sheets, drafts a personalised pitch with an **AI Agent**, sends it via the **UltraMsg** API, and writes the result back to the sheet. | 9 |
 
 ---
 
@@ -75,10 +77,75 @@ The workflow ships **inactive** (`"active": false`) and credential-free, so the 
 
 ---
 
+## Karachi Dental Clinic WhatsApp Cold Outreach Engine
+
+A rate-limited bulk-outreach engine for a dental clinic in Karachi. It reads a Google Sheet of prospect clinics, filters for rows still marked `Pending`, then walks them **one at a time** through a loop: an **AI Agent** drafts a personalised Roman Urdu WhatsApp pitch, the message is sent through the **UltraMsg** API, and the row's `Status` is stamped `Pitched` in the sheet before the loop waits and moves to the next clinic.
+
+The whole loop is driven by a single `Split in Batches` node with a batch size of **1**, which guarantees one message per iteration and keeps the workflow inside WhatsApp/UltraMsg rate limits.
+
+### Architecture
+
+```mermaid
+graph LR
+    A["Manual Trigger"] --> B["Read Google Sheets"]
+    B --> C["Filter Pending Rows"]
+    C --> D["Split in Batches<br/><i>batch size 1</i>"]
+    D -->|"loop"| E["AI Agent"]
+    F["Google Gemini Chat Model"] -.->|"ai_languageModel"| E
+    E --> G["HTTP Request<br/><i>UltraMsg send</i>"]
+    G --> H["Update Google Sheets Status"]
+    H --> I["Wait 50s (Rate Limit)"]
+    I -->|"loop back"| D
+```
+
+> The wait node is labelled **`Wait 5s (Rate Limit)`** on the canvas, but it is configured to `amount: 50, unit: seconds`. The name is stale — the effective delay is 50 seconds, which is the value to tune if your account is being rate-limited.
+
+### Node breakdown
+
+| Node | Type | Type version | Role |
+|------|------|---------------|------|
+| `Manual Trigger` | `n8n-nodes-base.manualTrigger` | 1 | Entry point. Swap for a Schedule Trigger for unattended runs. |
+| `Read Google Sheets` | `n8n-nodes-base.googleSheets` | 4 | Pulls the prospect list from the `karachi_dental_clinics` sheet. |
+| `Filter Pending Rows` | `n8n-nodes-base.filter` | 2 | Keeps only rows whose `Status` contains `Pending`, so re-runs are idempotent. |
+| `Split in Batches` | `n8n-nodes-base.splitInBatches` | 3 | The loop. Batch size is unset, so n8n's default of **1** applies — one clinic per iteration. |
+| `AI Agent` | `@n8n/n8n-nodes-langchain.agent` | 3.1 | Builds the outreach message from the row's `Clinic Name` and `Location/Area`. Runs with `retryOnFail`. |
+| `Google Gemini Chat Model` | `@n8n/n8n-nodes-langchain.lmChatGoogleGemini` | 1.1 | The LLM sub-node, using `gemini-2.5-flash`. |
+| `HTTP Request` | `n8n-nodes-base.httpRequest` | 4.5 | `POST`s the message to the UltraMsg send endpoint, normalising the local number format to E.164. |
+| `Update Google Sheets Status` | `n8n-nodes-base.googleSheets` | 4 | Marks the row `Pitched`, matched on the `Phone` column. |
+| `Wait 5s (Rate Limit)` | `n8n-nodes-base.wait` | 1 | Paces the loop. Configured to 50 seconds despite the node's name. |
+
+### How it works
+
+1. `Manual Trigger` starts a run, and `Read Google Sheets` loads every prospect row.
+2. `Filter Pending Rows` drops anything not `Pending`.
+3. `Split in Batches` emits the next single row on its **loop** output.
+4. `AI Agent` prompts Gemini to clean up the raw location string and produce the pitch; the reply is the node's `output` field.
+5. `HTTP Request` sends `output` as the message body to UltraMsg, prefixing the recipient with `92` and stripping a leading `0`.
+6. `Update Google Sheets Status` writes `Pitched` against the matching `Phone`.
+7. `Wait 5s (Rate Limit)` pauses, then feeds back into `Split in Batches` for the next clinic. When no batches remain, the loop's **done** output ends the run.
+
+### What you'll need to configure after import
+
+This workflow ships **inactive** and **credential-free**, with all environment-specific values replaced by placeholders. Before it will run:
+
+1. **Set the Google Sheet ID.** Replace `YOUR_GOOGLE_SHEET_ID` on both `Read Google Sheets` and `Update Google Sheets Status`.
+2. **Attach a Google Sheets credential** to both Google Sheets nodes.
+3. **Attach a Gemini credential** on `Google Gemini Chat Model`.
+4. **Set your UltraMsg details** on `HTTP Request`: `YOUR_ULTRAMSG_API_TOKEN` in the `token` body parameter, and `instanceYOUR_INSTANCE_ID` in the URL. Consider moving the token into an n8n credential or environment variable rather than leaving it in the node.
+5. **Review the sheet schema.** The expected columns are `Clinic Name`, `Phone`, `Location/Area`, `Status`, and `row_number`.
+6. **Check the `Status` values.** `Filter Pending Rows` matches rows containing `Pending`; `Update Google Sheets Status` writes `Pitched`. Adjust both if you use different labels.
+7. **Tune the pacing** in the wait node if your provider allows a shorter interval.
+8. **Replace the AI prompt** with your own offer, then activate the workflow.
+
+> **Cold outreach compliance.** WhatsApp's Business Terms prohibit unsolicited bulk messaging. Only contact businesses that have opted in, and confirm this with local advertising and data-protection law before running this at volume. The delay between messages is a rate-limit measure, not a compliance measure.
+
+---
+
 ## Requirements
 
 - **n8n Cloud**, or a **self-hosted n8n** instance running a recent `v1.x` release. The LangChain nodes ship with n8n; if you don't see them in the node picker, update your instance.
 - A **Google Gemini API key** or **Google Cloud service account** with the Gemini API enabled.
+- For the outreach engine: a **Google Sheets** document, and an **UltraMsg** account (or another WhatsApp Business API provider) with a token and instance ID.
 - A browser, for the editor UI. No coding required.
 
 ---
@@ -93,25 +160,25 @@ The fastest path, and the one you'll use 95% of the time.
 2. In the left sidebar, go to **Workflows**.
 3. Click the **⋯** menu in the top-right and choose **Import from File**.
    <br>*On older versions: use the **Import from URL** button, or drag the file directly onto the canvas.*
-4. Select `simple_chatbot_workflow.json` from your machine.
+4. Select the workflow file you want, e.g. `simple_chatbot_workflow.json` or `whatsapp_outreach_workflow.json`.
 5. In the import dialog, choose **Create a new workflow**, then click **Import**.
 6. The workflow opens on the canvas. Follow [Verifying your import](#verifying-your-import) to attach credentials and test it.
 
 ### Option B — Download the file, then import
 
-Fetch the raw JSON directly from GitHub, then import it as in Option A.
+Fetch the raw JSON directly from GitHub, then import it as in Option A. Swap `<file>` for any of the filenames listed in [Available workflows](#available-workflows).
 
 **macOS / Linux (curl):**
 ```bash
-curl -L -o simple_chatbot_workflow.json \
-  https://raw.githubusercontent.com/ibrahimkamran632/n8n-workflows/main/simple_chatbot_workflow.json
+curl -L -o <file> \
+  https://raw.githubusercontent.com/ibrahimkamran632/n8n-workflows/main/<file>
 ```
 
 **Windows (PowerShell):**
 ```powershell
 Invoke-WebRequest `
-  -Uri "https://raw.githubusercontent.com/ibrahimkamran632/n8n-workflows/main/simple_chatbot_workflow.json" `
-  -OutFile "simple_chatbot_workflow.json"
+  -Uri "https://raw.githubusercontent.com/ibrahimkamran632/n8n-workflows/main/<file>" `
+  -OutFile "<file>"
 ```
 
 **Or just copy the URL into n8n's _Import from URL_ field** — no download needed.
@@ -122,17 +189,17 @@ Useful for provisioning instances from a script or CI pipeline.
 
 ```bash
 # On a local n8n install
-n8n import:workflow --input=./simple_chatbot_workflow.json
+n8n import:workflow --input=./<file>
 
 # Against a running Docker container
-docker cp simple_chatbot_workflow.json <container>:/tmp/
-docker exec -it <container> n8n import:workflow --input=/tmp/simple_chatbot_workflow.json
+docker cp <file> <container>:/tmp/
+docker exec -it <container> n8n import:workflow --input=/tmp/<file>
 ```
 
 **Exporting a workflow back out** (to contribute changes, or for backup):
 
 ```bash
-n8n export:workflow --id=<WORKFLOW_ID> --output=./simple_chatbot_workflow.json
+n8n export:workflow --id=<WORKFLOW_ID> --output=./<file>
 ```
 
 > Credentials are **not** included in exported JSON. If your own workflow embeds secrets, scrub them before committing — see the [Disclaimer](#disclaimer).
@@ -141,7 +208,9 @@ n8n export:workflow --id=<WORKFLOW_ID> --output=./simple_chatbot_workflow.json
 
 ## Verifying your import
 
-A quick smoke test to confirm everything is wired correctly:
+A quick smoke test to confirm everything is wired correctly.
+
+**Simple Chatbot**
 
 1. Click the **Test Workflow** button in the top bar of n8n.
 2. Open the `When chat message received` node and use the chat panel to send a message such as `Hello, who are you?`.
@@ -151,6 +220,19 @@ A quick smoke test to confirm everything is wired correctly:
 
 If step 3 fails, the most common cause is a missing or unselected credential on `Google Gemini Chat Model`.
 
+**Karachi Dental Clinic WhatsApp Cold Outreach Engine**
+
+1. Keep your test sheet small — ideally a single `Pending` row — so the loop only runs once.
+2. Replace any remaining `YOUR_...` placeholders and attach all three credentials.
+3. Click **Test Workflow**, then open the `Manual Trigger` node and execute it.
+4. Walk the canvas left to right and confirm each node lights up in turn: `Read Google Sheets` → `Filter Pending Rows` → `Split in Batches` → `AI Agent` → `HTTP Request` → `Update Google Sheets Status` → `Wait 5s (Rate Limit)`.
+5. Open `AI Agent` and confirm its output is the drafted message text (exposed as `output`).
+6. Open `HTTP Request` and confirm the response body is a success payload from your provider.
+7. Open `Update Google Sheets Status` and confirm the row's `Status` is now `Pitched`.
+8. After the wait elapses, confirm the run jumps **back to `Split in Batches`** — that closing edge is what makes this a rate-limited loop rather than a one-shot run.
+
+If step 4 stalls at `Read Google Sheets`, the placeholder sheet ID or the Sheets credential is the usual cause. If the loop never returns to `Split in Batches`, check the edge from the wait node.
+
 ---
 
 ## Going to production
@@ -158,6 +240,7 @@ If step 3 fails, the most common cause is a missing or unselected credential on 
 - **Test first.** Always run a manual test before switching a workflow to *Active*.
 - **Understand every node.** These workflows are provided as a starting point. Review and adapt the logic to your own use case before running it in production.
 - **Keep credentials in n8n's credential store**, never inside the workflow JSON.
+- **Start small.** For any workflow that sends messages, test against a sheet or list with a single record before pointing it at real prospects.
 - **Mind the webhook URL.** Once activated, the chat endpoint is publicly reachable. Put it behind authentication or a reverse proxy if that matters for your deployment.
 - **Monitor executions.** n8n keeps an execution history for every run — use it to debug and to track token usage.
 
